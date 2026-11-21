@@ -163,7 +163,10 @@ export function collectStats(opts = {}) {
       if (sGens > 0) {
         const cid = f.slice(0, -3);
         const prompt = sIn + sCW + sCR;
-        const primaryModel = Array.from(sessModels.entries()).sort((a, b) => b[1] - a[1])[0]?.[0] || '(unknown)';
+        const modelsUsed = Array.from(sessModels.entries())
+          .sort((a, b) => b[1] - a[1])
+          .map(([name]) => name);
+        const primaryModel = modelsUsed[0] || '(unknown)';
         const ctxLimit = lastMaxCtx || 256000;
         totGens += sGens;
         totIn += sIn;
@@ -172,10 +175,11 @@ export function collectStats(opts = {}) {
         totOut += sOut;
         sessionList.push({
           id: cid,
-          title: titleMap.get(cid) || '(untitled)',
+          title: titleMap.get(cid) || '(无标题)',
           date: dayKey,
           mtimeMs,
           model: primaryModel,
+          models: modelsUsed,
           gens: sGens,
           prompt,
           cacheRead: sCR,
@@ -219,37 +223,38 @@ export function collectStats(opts = {}) {
 export function formatReport(stats) {
   const lines = [];
   const t = stats.totals;
-  lines.push(`${stats.label}  (${stats.sessions} sessions, ${t.gens} calls)`);
+  lines.push(`${stats.label}（${stats.sessions} 个会话，${t.gens} 次调用）`);
   lines.push(
-    `Total: Prompt ${fmtTok(t.prompt)} | CacheRead ${fmtTok(t.cacheRead)} | Uncached ${fmtTok(t.inTok)} | Out ${fmtTok(t.outTok)} | Hit ${t.cacheHitRatePct}%`
+    `总计: 输入 ${fmtTok(t.prompt)} | 缓存命中 ${fmtTok(t.cacheRead)} | 未命中 ${fmtTok(t.inTok)} | 输出 ${fmtTok(t.outTok)} | 命中率 ${t.cacheHitRatePct}%`
   );
 
   if (stats.byModel.length > 0) {
+    const modelWidth = Math.max(...stats.byModel.map((m) => m.key.length), 12);
     lines.push('');
-    lines.push('By Model:');
+    lines.push('分模型:');
     for (const m of stats.byModel) {
       lines.push(
-        `  ${m.key.padEnd(32)} ${String(m.gens).padStart(4)}x  Prompt ${fmtTok(m.prompt).padStart(8)}  Hit ${String(m.cacheHitRatePct.toFixed(1) + '%').padStart(6)}`
+        `  ${m.key.padEnd(modelWidth)}  ${String(m.gens).padStart(4)}次  输入 ${fmtTok(m.prompt).padStart(8)}  命中 ${String(m.cacheHitRatePct.toFixed(1) + '%').padStart(6)}`
       );
     }
   }
 
   if (stats.byDay.length > 1) {
     lines.push('');
-    lines.push('By Day:');
+    lines.push('按天:');
     for (const d of stats.byDay) {
       lines.push(
-        `  ${d.key}  ${String(d.gens).padStart(4)}x  Prompt ${fmtTok(d.prompt).padStart(8)}  Hit ${String(d.cacheHitRatePct.toFixed(1) + '%').padStart(6)}`
+        `  ${d.key}  ${String(d.gens).padStart(4)}次  输入 ${fmtTok(d.prompt).padStart(8)}  命中 ${String(d.cacheHitRatePct.toFixed(1) + '%').padStart(6)}`
       );
     }
   }
 
   if (stats.topSessions.length > 1) {
     lines.push('');
-    lines.push('Top Sessions:');
+    lines.push('消耗 Top 会话:');
     for (const s of stats.topSessions) {
       lines.push(
-        `  ${s.date}  Prompt ${fmtTok(s.prompt).padStart(8)}  Hit ${String(s.cacheHitRatePct.toFixed(1) + '%').padStart(6)}  ${s.title.slice(0, 42)}`
+        `  ${s.date}  输入 ${fmtTok(s.prompt).padStart(8)}  命中 ${String(s.cacheHitRatePct.toFixed(1) + '%').padStart(6)}  ${s.title.slice(0, 42)}`
       );
     }
   }
@@ -274,49 +279,54 @@ export function formatDashboard(stats, { color = false } = {}) {
   const reset = color ? '\x1b[0m' : '';
 
   const hitColor = (pct) => (!color ? '' : pct >= 85 ? green : pct >= 60 ? yellow : '\x1b[31m');
-  const rule = dim + '─'.repeat(96) + reset;
+  const rule = dim + '─'.repeat(100) + reset;
 
   const lines = [];
-  lines.push(`${bold}${cyan}AGY STATS DASHBOARD${reset}  ${dim}${stats.label}${reset}`);
+  lines.push(`${bold}${cyan}AGY 统计看板${reset}  ${dim}${stats.label}${reset}`);
   lines.push(rule);
   lines.push(
-    `${bold}Overview${reset}  Sessions: ${bold}${stats.sessions}${reset}  Calls: ${bold}${t.gens}${reset}  ` +
-      `Prompt: ${bold}${fmtTok(t.prompt)}${reset}  CacheRead: ${bold}${fmtTok(t.cacheRead)}${reset}  ` +
-      `Uncached: ${fmtTok(t.inTok)}  Out: ${fmtTok(t.outTok)}  ` +
-      `Hit: ${hitColor(t.cacheHitRatePct)}${bold}${t.cacheHitRatePct}%${reset}`
+    `${bold}今日总览${reset}  会话数: ${bold}${stats.sessions}${reset}  调用: ${bold}${t.gens}${reset}  ` +
+      `总输入: ${bold}${fmtTok(t.prompt)}${reset}  缓存命中: ${bold}${fmtTok(t.cacheRead)}${reset}  ` +
+      `未命中: ${fmtTok(t.inTok)}  输出: ${fmtTok(t.outTok)}  ` +
+      `命中率: ${hitColor(t.cacheHitRatePct)}${bold}${t.cacheHitRatePct}%${reset}`
   );
 
   if (stats.byModel.length > 0) {
-    const modelSummary = stats.byModel
-      .slice(0, 5)
-      .map((m) => `${m.key} ${fmtTok(m.prompt)} (${m.cacheHitRatePct.toFixed(1)}%)`)
-      .join(' · ');
-    lines.push(`${dim}Models:${reset}   ${modelSummary}${stats.byModel.length > 5 ? ` (+${stats.byModel.length - 5} more)` : ''}`);
+    const modelWidth = Math.max(...stats.byModel.map((m) => m.key.length), 12);
+    lines.push(`${bold}分模型汇总 (${stats.byModel.length})${reset}`);
+    for (const m of stats.byModel) {
+      lines.push(
+        `  ${m.key.padEnd(modelWidth)}  ${String(m.gens).padStart(4)}次  输入 ${fmtTok(m.prompt).padStart(8)}  缓存 ${fmtTok(m.cacheRead).padStart(8)}  命中 ${hitColor(m.cacheHitRatePct)}${String(m.cacheHitRatePct.toFixed(1) + '%').padStart(6)}${reset}`
+      );
+    }
   }
 
   lines.push(rule);
-  lines.push(`${bold}All Sessions (${sessions.length})${reset}`);
+  lines.push(`${bold}全部会话明细 (${sessions.length})${reset}`);
 
   if (sessions.length === 0) {
-    lines.push(`  ${dim}(no active sessions in this range)${reset}`);
+    lines.push(`  ${dim}(当前时间范围内无活跃会话)${reset}`);
     return lines.join('\n');
   }
 
+  const sessionModelStr = (s) => (s.models && s.models.length > 0 ? s.models.join(', ') : s.model || '(unknown)');
+  const sessModelWidth = Math.max(...sessions.map((s) => sessionModelStr(s).length), 12);
+
   lines.push(
-    `${dim}  Time   ID        Calls    Prompt     Cache       Out    Hit%   Ctx%  Model                         Title${reset}`
+    `${dim}  时间   ID         调用    总输入      缓存      输出   命中率  上下文  ${'使用模型'.padEnd(sessModelWidth)}  标题${reset}`
   );
 
   for (const s of sessions) {
     const tm = formatTimeHHMM(s.mtimeMs);
     const shortId = s.id.slice(0, 8);
-    const calls = String(s.gens).padStart(5);
+    const calls = String(s.gens).padStart(4);
     const prompt = fmtTok(s.prompt).padStart(8);
     const cache = fmtTok(s.cacheRead).padStart(8);
     const out = fmtTok(s.outTok).padStart(8);
     const hitStr = `${s.cacheHitRatePct.toFixed(1)}%`.padStart(6);
     const ctxStr = `${s.ctxPct ?? 0}%`.padStart(5);
-    const model = (s.model || '(unknown)').slice(0, 28).padEnd(28);
-    const title = (s.title || '(untitled)').slice(0, 36);
+    const model = sessionModelStr(s).padEnd(sessModelWidth);
+    const title = (s.title || '(无标题)').slice(0, 36);
     lines.push(
       `  ${tm}  ${dim}${shortId}${reset}  ${calls}  ${prompt}  ${cache}  ${out}  ${hitColor(s.cacheHitRatePct)}${hitStr}${reset}  ${ctxStr}  ${model}  ${title}`
     );

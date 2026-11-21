@@ -91,16 +91,17 @@ test('collectStats aggregates by model and filters by day/week/session', () => {
   assert.equal(today.byModel[0].key, 'Gemini 4 Hydrogen (High)');
   assert.equal(today.allSessions.length, 1);
   const board = formatDashboard(today, { color: false });
-  assert.match(board, /AGY STATS DASHBOARD/);
-  assert.match(board, /All Sessions \(1\)/);
+  assert.match(board, /AGY 统计看板/);
+  assert.match(board, /全部会话明细 \(1\)/);
+  assert.match(board, /Gemini 4 Hydrogen \(High\)/);
   assert.match(board, /11111111/);
 
   const week = collectStats({ cliDir: tmpDir, convDir, now, week: true });
   assert.equal(week.sessions, 2);
   assert.equal(week.totals.prompt, 300000);
   assert.equal(week.byModel.length, 2);
-  assert.match(formatReport(week), /By Model:/);
-  assert.match(formatReport(week), /By Day:/);
+  assert.match(formatReport(week), /分模型:/);
+  assert.match(formatReport(week), /按天:/);
 
   const latest = collectStats({ cliDir: tmpDir, convDir, now, session: 'latest' });
   assert.equal(latest.sessions, 1);
