@@ -16,7 +16,7 @@ function getDbMtimeMs(dbPath) {
   const st = fs.statSync(dbPath, { throwIfNoEntry: false });
   if (!st) return 0;
   const wst = fs.statSync(`${dbPath}-wal`, { throwIfNoEntry: false });
-  return Math.max(st.mtimeMs, wst ? wst.mtimeMs : 0);
+  return Math.max(st.mtimeMs, wst && wst.size > 0 ? wst.mtimeMs : 0);
 }
 
 function readTitleMap(cliDir) {

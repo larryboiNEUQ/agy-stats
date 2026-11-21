@@ -30,9 +30,10 @@ function getDbSig(dbPath) {
   const st = fs.statSync(dbPath, { throwIfNoEntry: false });
   if (!st) return null;
   const wst = fs.statSync(`${dbPath}-wal`, { throwIfNoEntry: false });
-  const walSig = wst ? `${wst.mtimeMs}:${wst.size}` : '0:0';
+  const hasActiveWal = Boolean(wst && wst.size > 0);
+  const walSig = hasActiveWal ? `${wst.mtimeMs}:${wst.size}` : '0:0';
   return {
-    mtimeMs: Math.max(st.mtimeMs, wst ? wst.mtimeMs : 0),
+    mtimeMs: Math.max(st.mtimeMs, hasActiveWal ? wst.mtimeMs : 0),
     sig: `${st.mtimeMs}:${st.size}|${walSig}`
   };
 }

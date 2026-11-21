@@ -85,6 +85,9 @@ test('collectStats aggregates by model and filters by day/week/session', () => {
   );
   db2.close();
   fs.utimesSync(path.join(convDir, '22222222-2222-2222-2222-222222222222.db'), monday, monday);
+  // Simulate SQLite creating an empty 0-byte -wal file today on an older .db
+  fs.writeFileSync(path.join(convDir, '22222222-2222-2222-2222-222222222222.db-wal'), '');
+  fs.utimesSync(path.join(convDir, '22222222-2222-2222-2222-222222222222.db-wal'), now, now);
 
   const today = collectStats({ cliDir: tmpDir, convDir, now });
   assert.equal(today.sessions, 1);
