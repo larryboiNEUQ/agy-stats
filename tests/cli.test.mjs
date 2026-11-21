@@ -5,7 +5,7 @@ import os from 'node:os';
 import path from 'node:path';
 import { spawnSync } from 'node:child_process';
 import { DatabaseSync } from 'node:sqlite';
-import { collectStats, formatReport, parseCliArgs } from '../src/cli.mjs';
+import { collectStats, formatDashboard, formatReport, parseCliArgs } from '../src/cli.mjs';
 
 function encodeVarint(n) {
   const bytes = [];
@@ -45,14 +45,16 @@ test('parseCliArgs parses flags cleanly', () => {
     days: 0,
     session: '',
     json: true,
-    help: false
+    help: false,
+    dashboard: false
   });
-  assert.deepEqual(parseCliArgs(['-s', 'latest', '-d', '3']), {
+  assert.deepEqual(parseCliArgs(['dashboard', '-s', 'latest', '-d', '3']), {
     week: false,
     days: 3,
     session: 'latest',
     json: false,
-    help: false
+    help: false,
+    dashboard: true
   });
 });
 
@@ -87,6 +89,11 @@ test('collectStats aggregates by model and filters by day/week/session', () => {
   assert.equal(today.totals.prompt, 100000);
   assert.equal(today.totals.cacheHitRatePct, 90);
   assert.equal(today.byModel[0].key, 'Gemini 4 Hydrogen (High)');
+  assert.equal(today.allSessions.length, 1);
+  const board = formatDashboard(today, { color: false });
+  assert.match(board, /AGY STATS DASHBOARD/);
+  assert.match(board, /All Sessions \(1\)/);
+  assert.match(board, /11111111/);
 
   const week = collectStats({ cliDir: tmpDir, convDir, now, week: true });
   assert.equal(week.sessions, 2);

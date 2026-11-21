@@ -39,6 +39,7 @@ This installs:
 
 ```bash
 agy-stats              # Today summary + by-model breakdown
+agy-stats dashboard    # Dashboard: today overview on top + all sessions table below (-b / --board)
 agy-stats --week       # This week (Mon ~ today) + by-day + by-model
 agy-stats --days 7     # Last 7 days
 agy-stats -s latest    # Most recent session

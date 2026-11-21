@@ -12,6 +12,7 @@ Query local Antigravity CLI conversation metrics (`~/.gemini/antigravity-cli/con
 Prefer `agy-stats` if it is on `PATH`; otherwise run `node --no-warnings ~/.gemini/antigravity-cli/agy-stats-cli.mjs`.
 
 - **Today (default)**: `agy-stats --json`
+- **Dashboard (today overview + all sessions)**: `agy-stats dashboard` (or `agy-stats -b`)
 - **This week (Mon ~ today)**: `agy-stats --week --json`
 - **Last N days**: `agy-stats --days 7 --json`
 - **Specific or latest session**: `agy-stats --session <conversation_id|latest> --json`

@@ -139,6 +139,9 @@ export function collectStats(opts = {}) {
       let sCW = 0;
       let sCR = 0;
       let sOut = 0;
+      let lastCtx = 0;
+      let lastMaxCtx = 0;
+      const sessModels = new Map();
       const dayKey = formatLocalDate(mtimeMs);
 
       for (let i = 0; i < rows.length; i++) {
@@ -149,13 +152,19 @@ export function collectStats(opts = {}) {
         sCW += p.cacheWrite;
         sCR += p.cacheRead;
         sOut += p.outTok;
-        addBucket(byModel, p.modelName || '(unknown)', p);
+        if (p.ctx > 0) lastCtx = p.ctx;
+        if (p.maxCtx > 0) lastMaxCtx = p.maxCtx;
+        const mName = p.modelName || '(unknown)';
+        sessModels.set(mName, (sessModels.get(mName) || 0) + p.inTok + p.cacheWrite + p.cacheRead);
+        addBucket(byModel, mName, p);
         addBucket(byDay, dayKey, p);
       }
 
       if (sGens > 0) {
         const cid = f.slice(0, -3);
         const prompt = sIn + sCW + sCR;
+        const primaryModel = Array.from(sessModels.entries()).sort((a, b) => b[1] - a[1])[0]?.[0] || '(unknown)';
+        const ctxLimit = lastMaxCtx || 256000;
         totGens += sGens;
         totIn += sIn;
         totCW += sCW;
@@ -165,10 +174,16 @@ export function collectStats(opts = {}) {
           id: cid,
           title: titleMap.get(cid) || '(untitled)',
           date: dayKey,
+          mtimeMs,
+          model: primaryModel,
           gens: sGens,
           prompt,
           cacheRead: sCR,
+          inTok: sIn,
           outTok: sOut,
+          lastCtx,
+          ctxLimit,
+          ctxPct: ctxLimit > 0 ? Math.round((lastCtx / ctxLimit) * 100) : 0,
           cacheHitRatePct: prompt > 0 ? Number(((sCR / prompt) * 100).toFixed(1)) : 0
         });
       }
@@ -181,6 +196,8 @@ export function collectStats(opts = {}) {
   }
 
   const totPrompt = totIn + totCW + totCR;
+  const sortedByPrompt = [...sessionList].sort((a, b) => b.prompt - a.prompt);
+  const sortedByRecent = [...sessionList].sort((a, b) => (b.mtimeMs || 0) - (a.mtimeMs || 0));
   return {
     label,
     sessions: sessionList.length,
@@ -194,7 +211,8 @@ export function collectStats(opts = {}) {
     },
     byModel: finalizeBuckets(byModel),
     byDay: finalizeBuckets(byDay).sort((a, b) => a.key.localeCompare(b.key)),
-    topSessions: sessionList.sort((a, b) => b.prompt - a.prompt).slice(0, 5)
+    topSessions: sortedByPrompt.slice(0, 5),
+    allSessions: sortedByRecent
   };
 }
 
@@ -239,11 +257,80 @@ export function formatReport(stats) {
   return lines.join('\n');
 }
 
+function formatTimeHHMM(ms) {
+  if (!ms) return '--:--';
+  const d = new Date(ms);
+  return `${String(d.getHours()).padStart(2, '0')}:${String(d.getMinutes()).padStart(2, '0')}`;
+}
+
+export function formatDashboard(stats, { color = false } = {}) {
+  const t = stats.totals;
+  const sessions = stats.allSessions || stats.topSessions || [];
+  const bold = color ? '\x1b[1m' : '';
+  const dim = color ? '\x1b[2m' : '';
+  const cyan = color ? '\x1b[36m' : '';
+  const green = color ? '\x1b[32m' : '';
+  const yellow = color ? '\x1b[33m' : '';
+  const reset = color ? '\x1b[0m' : '';
+
+  const hitColor = (pct) => (!color ? '' : pct >= 85 ? green : pct >= 60 ? yellow : '\x1b[31m');
+  const rule = dim + '─'.repeat(96) + reset;
+
+  const lines = [];
+  lines.push(`${bold}${cyan}AGY STATS DASHBOARD${reset}  ${dim}${stats.label}${reset}`);
+  lines.push(rule);
+  lines.push(
+    `${bold}Overview${reset}  Sessions: ${bold}${stats.sessions}${reset}  Calls: ${bold}${t.gens}${reset}  ` +
+      `Prompt: ${bold}${fmtTok(t.prompt)}${reset}  CacheRead: ${bold}${fmtTok(t.cacheRead)}${reset}  ` +
+      `Uncached: ${fmtTok(t.inTok)}  Out: ${fmtTok(t.outTok)}  ` +
+      `Hit: ${hitColor(t.cacheHitRatePct)}${bold}${t.cacheHitRatePct}%${reset}`
+  );
+
+  if (stats.byModel.length > 0) {
+    const modelSummary = stats.byModel
+      .slice(0, 5)
+      .map((m) => `${m.key} ${fmtTok(m.prompt)} (${m.cacheHitRatePct.toFixed(1)}%)`)
+      .join(' · ');
+    lines.push(`${dim}Models:${reset}   ${modelSummary}${stats.byModel.length > 5 ? ` (+${stats.byModel.length - 5} more)` : ''}`);
+  }
+
+  lines.push(rule);
+  lines.push(`${bold}All Sessions (${sessions.length})${reset}`);
+
+  if (sessions.length === 0) {
+    lines.push(`  ${dim}(no active sessions in this range)${reset}`);
+    return lines.join('\n');
+  }
+
+  lines.push(
+    `${dim}  Time   ID        Calls    Prompt     Cache       Out    Hit%   Ctx%  Model                         Title${reset}`
+  );
+
+  for (const s of sessions) {
+    const tm = formatTimeHHMM(s.mtimeMs);
+    const shortId = s.id.slice(0, 8);
+    const calls = String(s.gens).padStart(5);
+    const prompt = fmtTok(s.prompt).padStart(8);
+    const cache = fmtTok(s.cacheRead).padStart(8);
+    const out = fmtTok(s.outTok).padStart(8);
+    const hitStr = `${s.cacheHitRatePct.toFixed(1)}%`.padStart(6);
+    const ctxStr = `${s.ctxPct ?? 0}%`.padStart(5);
+    const model = (s.model || '(unknown)').slice(0, 28).padEnd(28);
+    const title = (s.title || '(untitled)').slice(0, 36);
+    lines.push(
+      `  ${tm}  ${dim}${shortId}${reset}  ${calls}  ${prompt}  ${cache}  ${out}  ${hitColor(s.cacheHitRatePct)}${hitStr}${reset}  ${ctxStr}  ${model}  ${title}`
+    );
+  }
+
+  return lines.join('\n');
+}
+
 export function parseCliArgs(argv) {
-  const opts = { week: false, days: 0, session: '', json: false, help: false };
+  const opts = { week: false, days: 0, session: '', json: false, help: false, dashboard: false };
   for (let i = 0; i < argv.length; i++) {
     const a = argv[i];
-    if (a === '--week' || a === '-w') opts.week = true;
+    if (a === 'dashboard' || a === '--dashboard' || a === '--board' || a === '-b') opts.dashboard = true;
+    else if (a === '--week' || a === '-w') opts.week = true;
     else if (a === '--json') opts.json = true;
     else if (a === '--help' || a === '-h') opts.help = true;
     else if (a === '--today' || a === '-t') {
@@ -272,9 +359,10 @@ if (isMain()) {
   if (opts.help) {
     console.log(
       [
-        'Usage: agy-stats [options]',
+        'Usage: agy-stats [dashboard] [options]',
         '',
         'Options:',
+        '  -b, --board          Show dashboard (today overview + all sessions table)',
         '  -t, --today          Show today stats (default)',
         '  -w, --week           Show this week stats (Mon ~ today)',
         '  -d, --days <N>       Show last N days stats',
@@ -286,5 +374,11 @@ if (isMain()) {
     process.exit(0);
   }
   const stats = collectStats(opts);
-  console.log(opts.json ? JSON.stringify(stats, null, 2) : formatReport(stats));
+  if (opts.json) {
+    console.log(JSON.stringify(stats, null, 2));
+  } else if (opts.dashboard) {
+    console.log(formatDashboard(stats, { color: Boolean(process.stdout.isTTY) }));
+  } else {
+    console.log(formatReport(stats));
+  }
 }
