@@ -42,7 +42,7 @@ if (action === 'install') {
   const settings = readSettings();
   settings.statusLine = {
     type: 'command',
-    command: `${process.execPath} --no-warnings ${TARGET_SCRIPT}`,
+    command: `"${process.execPath}" --no-warnings "${TARGET_SCRIPT}"`,
     stack_with_default: true
   };
   writeSettings(settings);
