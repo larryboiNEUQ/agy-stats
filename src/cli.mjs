@@ -433,7 +433,7 @@ function runInteractiveDashboard(initialOpts) {
   let currentDate = initialOpts.date && /^\d{4}-\d{2}-\d{2}$/.test(initialOpts.date) ? initialOpts.date : todayStr;
   let scrollOffset = 0;
 
-  const render = () => {
+  const render = (flash = '') => {
     const queryOpts = mode === 'week' ? { ...initialOpts, week: true, date: '' } : { ...initialOpts, week: false, date: currentDate };
     const stats = collectStats(queryOpts);
     const fullLines = formatDashboard(stats, { color: true }).split('\n');
@@ -445,9 +445,10 @@ function runInteractiveDashboard(initialOpts) {
 
     const visible = fullLines.slice(scrollOffset, scrollOffset + maxRows).join('\n');
     const scrollInfo = maxScroll > 0 ? `  (${scrollOffset + 1}-${Math.min(fullLines.length, scrollOffset + maxRows)}/${fullLines.length}行)` : '';
+    const statusText = flash ? `  \x1b[32m✓ ${flash}\x1b[0m` : '';
     const navHint =
       '\n\x1b[2m────────────────────────────────────────────────────────────────────────────────────────────────────\n' +
-      `操作: [←/h] 前一天  [→/l] 后一天  [↑/↓] 滚动  [t] 今天  [w] 周/日  [r] 刷新  [q] 退出${scrollInfo}\x1b[0m`;
+      `操作: [←/h] 前一天  [→/l] 后一天  [↑/↓] 滚动  [t] 今天  [w] 周/日  [r] 刷新  [q] 退出${scrollInfo}\x1b[0m${statusText}`;
     process.stdout.write('\x1b[H\x1b[2J' + visible + navHint);
   };
 
@@ -512,7 +513,9 @@ function runInteractiveDashboard(initialOpts) {
       scrollOffset = 0;
       render();
     } else if (key === 'r' || key === 'R') {
-      render();
+      const now = new Date();
+      const ts = `${String(now.getHours()).padStart(2, '0')}:${String(now.getMinutes()).padStart(2, '0')}:${String(now.getSeconds()).padStart(2, '0')}`;
+      render(`已刷新 ${ts}`);
     }
   });
 }
