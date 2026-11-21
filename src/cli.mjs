@@ -280,13 +280,54 @@ export function formatReport(stats) {
   return lines.join('\n');
 }
 
-function formatTimeHHMM(ms) {
-  if (!ms) return '--:--';
+function formatTimeLabel(ms, includeDate = false) {
+  if (!ms) return includeDate ? '--/-- --:--' : '--:--';
   const d = new Date(ms);
-  return `${String(d.getHours()).padStart(2, '0')}:${String(d.getMinutes()).padStart(2, '0')}`;
+  const hhmm = `${String(d.getHours()).padStart(2, '0')}:${String(d.getMinutes()).padStart(2, '0')}`;
+  if (!includeDate) return hhmm;
+  return `${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')} ${hhmm}`;
 }
 
-export function formatDashboard(stats, { color = false } = {}) {
+function displayWidth(str) {
+  let w = 0;
+  for (const ch of str) {
+    const code = ch.codePointAt(0);
+    w +=
+      (code >= 0x1100 && code <= 0x115f) ||
+      (code >= 0x2e80 && code <= 0x9fff) ||
+      (code >= 0xac00 && code <= 0xd7af) ||
+      (code >= 0xf900 && code <= 0xfaff) ||
+      (code >= 0xff01 && code <= 0xff60) ||
+      (code >= 0xffe0 && code <= 0xffe6)
+        ? 2
+        : 1;
+  }
+  return w;
+}
+
+function padEndW(str, target) {
+  const diff = target - displayWidth(str);
+  return diff > 0 ? str + ' '.repeat(diff) : str;
+}
+
+function padStartW(str, target) {
+  const diff = target - displayWidth(str);
+  return diff > 0 ? ' '.repeat(diff) + str : str;
+}
+
+function truncateW(str, maxW) {
+  let w = 0;
+  let out = '';
+  for (const ch of str) {
+    const cw = displayWidth(ch);
+    if (w + cw > maxW) return out.trimEnd() + '…';
+    out += ch;
+    w += cw;
+  }
+  return out;
+}
+
+export function formatDashboard(stats, { color = false, columns = process.stdout.columns || 100 } = {}) {
   const t = stats.totals;
   const sessions = stats.allSessions || stats.topSessions || [];
   const bold = color ? '\x1b[1m' : '';
@@ -297,7 +338,8 @@ export function formatDashboard(stats, { color = false } = {}) {
   const reset = color ? '\x1b[0m' : '';
 
   const hitColor = (pct) => (!color ? '' : pct >= 85 ? green : pct >= 60 ? yellow : '\x1b[31m');
-  const rule = dim + '─'.repeat(100) + reset;
+  const width = Math.max(80, Math.min(columns, 120));
+  const rule = dim + '─'.repeat(width) + reset;
 
   const lines = [];
   lines.push(`${bold}${cyan}AGY 统计看板${reset}  ${dim}${stats.label}${reset}`);
@@ -327,27 +369,31 @@ export function formatDashboard(stats, { color = false } = {}) {
     return lines.join('\n');
   }
 
-  const sessionModelStr = (s) => (s.models && s.models.length > 0 ? s.models.join(', ') : s.model || '(unknown)');
-  const sessModelWidth = Math.max(...sessions.map((s) => sessionModelStr(s).length), 12);
+  const multiDay = new Set(sessions.map((s) => s.date)).size > 1;
+  const timeW = multiDay ? 11 : 5;
+  const fixedW = 2 + timeW + 2 + 8 + 2 + 5 + 2 + 8 + 2 + 8 + 2 + 7 + 2 + 6 + 2 + 6 + 2;
+  const titleMaxW = Math.max(16, width - fixedW);
 
   lines.push(
-    `${dim}  时间   ID         调用    总输入      缓存      输出   命中率  上下文  ${'使用模型'.padEnd(sessModelWidth)}  标题${reset}`
+    `${dim}  ${padEndW('时间', timeW)}  ${padEndW('ID', 8)}  ${padStartW('调用', 5)}  ${padStartW('总输入', 8)}  ${padStartW('缓存', 8)}  ${padStartW('输出', 7)}  ${padStartW('命中率', 6)}  ${padStartW('上下文', 6)}  标题${reset}`
   );
 
   for (const s of sessions) {
-    const tm = formatTimeHHMM(s.mtimeMs);
+    const tm = formatTimeLabel(s.mtimeMs, multiDay);
     const shortId = s.id.slice(0, 8);
-    const calls = String(s.gens).padStart(4);
+    const calls = String(s.gens).padStart(5);
     const prompt = fmtTok(s.prompt).padStart(8);
     const cache = fmtTok(s.cacheRead).padStart(8);
-    const out = fmtTok(s.outTok).padStart(8);
+    const out = fmtTok(s.outTok).padStart(7);
     const hitStr = `${s.cacheHitRatePct.toFixed(1)}%`.padStart(6);
-    const ctxStr = `${s.ctxPct ?? 0}%`.padStart(5);
-    const model = sessionModelStr(s).padEnd(sessModelWidth);
-    const title = (s.title || '(无标题)').slice(0, 36);
+    const ctxStr = `${s.ctxPct ?? 0}%`.padStart(6);
+    const title = truncateW(s.title || '(无标题)', titleMaxW);
+    const modelsText = (s.models && s.models.length > 0 ? s.models.join(', ') : s.model || '(unknown)');
+
     lines.push(
-      `  ${tm}  ${dim}${shortId}${reset}  ${calls}  ${prompt}  ${cache}  ${out}  ${hitColor(s.cacheHitRatePct)}${hitStr}${reset}  ${ctxStr}  ${model}  ${title}`
+      `  ${tm}  ${dim}${shortId}${reset}  ${calls}  ${prompt}  ${cache}  ${out}  ${hitColor(s.cacheHitRatePct)}${hitStr}${reset}  ${ctxStr}  ${bold}${title}${reset}`
     );
+    lines.push(`  ${' '.repeat(timeW)}  ${dim}└ 模型: ${modelsText}${reset}`);
   }
 
   return lines.join('\n');
