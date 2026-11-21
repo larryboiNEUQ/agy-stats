@@ -177,7 +177,16 @@ export function computeStatusLine(data = {}, opts = {}) {
   ].join(` ${dim}|${reset} `);
 }
 
-if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) {
+function isMain() {
+  if (!process.argv[1]) return false;
+  try {
+    return import.meta.url === pathToFileURL(fs.realpathSync(process.argv[1])).href;
+  } catch {
+    return false;
+  }
+}
+
+if (isMain()) {
   let rawInput = '';
   try {
     rawInput = fs.readFileSync(0, 'utf8');
