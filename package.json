@@ -1,0 +1,21 @@
+{
+  "name": "agy-statusline",
+  "version": "1.0.0",
+  "description": "Custom statusLine plugin for Google Antigravity CLI (agy): real-time context window usage, per-turn/session/daily token totals, and prompt cache hit rates.",
+  "type": "module",
+  "license": "MIT",
+  "engines": {
+    "node": ">=22.13.0"
+  },
+  "scripts": {
+    "test": "node --no-warnings --test tests/*.test.mjs"
+  },
+  "keywords": [
+    "antigravity",
+    "agy",
+    "statusline",
+    "cli",
+    "token-usage",
+    "cache-hit-rate"
+  ]
+}
