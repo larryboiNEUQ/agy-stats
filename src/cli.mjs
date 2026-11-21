@@ -231,7 +231,7 @@ export function collectStats(opts = {}) {
       outTok: totOut,
       cacheHitRatePct: totPrompt > 0 ? Number(((totCR / totPrompt) * 100).toFixed(2)) : 0
     },
-    byModel: finalizeBuckets(byModel),
+    byModel: finalizeBuckets(byModel).sort((a, b) => b.cacheHitRatePct - a.cacheHitRatePct || b.prompt - a.prompt),
     byDay: finalizeBuckets(byDay).sort((a, b) => a.key.localeCompare(b.key)),
     topSessions: sortedByPrompt.slice(0, 5),
     allSessions: sortedByRecent
@@ -431,29 +431,51 @@ function runInteractiveDashboard(initialOpts) {
   const todayStr = formatLocalDate(Date.now());
   let mode = initialOpts.week ? 'week' : 'day';
   let currentDate = initialOpts.date && /^\d{4}-\d{2}-\d{2}$/.test(initialOpts.date) ? initialOpts.date : todayStr;
+  let scrollOffset = 0;
 
   const render = () => {
     const queryOpts = mode === 'week' ? { ...initialOpts, week: true, date: '' } : { ...initialOpts, week: false, date: currentDate };
     const stats = collectStats(queryOpts);
-    const body = formatDashboard(stats, { color: true });
+    const fullLines = formatDashboard(stats, { color: true }).split('\n');
+    const maxRows = Math.max(12, (process.stdout.rows || 40) - 3);
+
+    const maxScroll = Math.max(0, fullLines.length - maxRows);
+    if (scrollOffset > maxScroll) scrollOffset = maxScroll;
+    if (scrollOffset < 0) scrollOffset = 0;
+
+    const visible = fullLines.slice(scrollOffset, scrollOffset + maxRows).join('\n');
+    const scrollInfo = maxScroll > 0 ? `  (${scrollOffset + 1}-${Math.min(fullLines.length, scrollOffset + maxRows)}/${fullLines.length}行)` : '';
     const navHint =
       '\n\x1b[2m────────────────────────────────────────────────────────────────────────────────────────────────────\n' +
-      '操作: [← / h] 前一天   [→ / l] 后一天   [t] 今天   [w] 切换周/日   [r] 刷新   [q / Esc] 退出\x1b[0m';
-    process.stdout.write('\x1b[2J\x1b[H' + body + navHint + '\n');
+      `操作: [←/h] 前一天  [→/l] 后一天  [↑/↓] 滚动  [t] 今天  [w] 周/日  [r] 刷新  [q] 退出${scrollInfo}\x1b[0m`;
+    process.stdout.write('\x1b[H\x1b[2J' + visible + navHint);
   };
 
-  process.stdin.setRawMode(true);
-  process.stdin.resume();
-  process.stdin.setEncoding('utf8');
-  process.stdout.write('\x1b[?25l');
-
+  let cleaned = false;
   const cleanup = () => {
-    process.stdout.write('\x1b[?25h');
+    if (cleaned) return;
+    cleaned = true;
+    process.stdout.write('\x1b[?25h\x1b[?1049l');
     try {
       process.stdin.setRawMode(false);
     } catch {}
     process.stdin.pause();
   };
+
+  process.stdout.write('\x1b[?1049h\x1b[?25l');
+  process.stdin.setRawMode(true);
+  process.stdin.resume();
+  process.stdin.setEncoding('utf8');
+
+  process.on('SIGINT', () => {
+    cleanup();
+    process.exit(0);
+  });
+  process.on('SIGTERM', () => {
+    cleanup();
+    process.exit(0);
+  });
+  process.stdout.on('resize', render);
 
   render();
 
@@ -464,18 +486,30 @@ function runInteractiveDashboard(initialOpts) {
     } else if (key === '\u001b[D' || key === 'h' || key === '[') {
       mode = 'day';
       currentDate = shiftDateStr(currentDate, -1);
+      scrollOffset = 0;
       render();
     } else if (key === '\u001b[C' || key === 'l' || key === ']') {
       mode = 'day';
       const next = shiftDateStr(currentDate, 1);
-      if (next <= todayStr) currentDate = next;
+      if (next <= todayStr) {
+        currentDate = next;
+        scrollOffset = 0;
+      }
+      render();
+    } else if (key === '\u001b[A' || key === 'k') {
+      scrollOffset = Math.max(0, scrollOffset - 3);
+      render();
+    } else if (key === '\u001b[B' || key === 'j') {
+      scrollOffset += 3;
       render();
     } else if (key === 't' || key === 'T') {
       mode = 'day';
       currentDate = todayStr;
+      scrollOffset = 0;
       render();
     } else if (key === 'w' || key === 'W') {
       mode = mode === 'week' ? 'day' : 'week';
+      scrollOffset = 0;
       render();
     } else if (key === 'r' || key === 'R') {
       render();

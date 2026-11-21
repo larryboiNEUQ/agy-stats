@@ -102,6 +102,8 @@ test('collectStats aggregates by model and filters by day/week/session', () => {
   assert.equal(week.sessions, 2);
   assert.equal(week.totals.prompt, 300000);
   assert.equal(week.byModel.length, 2);
+  assert.equal(week.byModel[0].key, 'Gemini 4 Hydrogen (High)');
+  assert.equal(week.byModel[1].key, 'Gemini 4 Neon (Medium)');
   assert.match(formatReport(week), /分模型:/);
   assert.match(formatReport(week), /按天:/);
 
