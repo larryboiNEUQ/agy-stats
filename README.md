@@ -33,6 +33,7 @@ node install.mjs install
 This installs:
 1. `agy-stats` CLI command to `~/.local/bin/agy-stats` (when `~/.local/bin` exists), or you can run `npm link`.
 2. `statusLine` hook into `~/.gemini/antigravity-cli/settings.json` (`stack_with_default: true`).
+3. `agy-stats` skill to `~/.agents/skills/agy-stats` and links it into `~/.gemini/config/skills/agy-stats` (pass `--no-skill` to skip).
 
 ## CLI Usage
 

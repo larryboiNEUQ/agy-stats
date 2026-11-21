@@ -13,7 +13,13 @@ const TARGET_CLI = path.join(CLI_DIR, 'agy-stats-cli.mjs');
 const LOCAL_BIN_DIR = path.join(os.homedir(), '.local', 'bin');
 const LOCAL_BIN_SHIM = path.join(LOCAL_BIN_DIR, process.platform === 'win32' ? 'agy-stats.cmd' : 'agy-stats');
 
-const action = process.argv[2] || 'install';
+const AGENTS_SKILL_DIR = path.join(os.homedir(), '.agents', 'skills', 'agy-stats');
+const GEMINI_SKILLS_DIR = path.join(os.homedir(), '.gemini', 'config', 'skills');
+const GEMINI_SKILL_LINK = path.join(GEMINI_SKILLS_DIR, 'agy-stats');
+
+const args = process.argv.slice(2);
+const action = args.find((a) => !a.startsWith('-')) || 'install';
+const skipSkill = args.includes('--no-skill');
 
 function readSettings() {
   if (!fs.existsSync(SETTINGS_PATH)) return {};
@@ -23,6 +29,41 @@ function readSettings() {
 function writeSettings(obj) {
   fs.mkdirSync(CLI_DIR, { recursive: true });
   fs.writeFileSync(SETTINGS_PATH, JSON.stringify(obj, null, 2) + '\n');
+}
+
+function removePath(p) {
+  try {
+    const st = fs.lstatSync(p, { throwIfNoEntry: false });
+    if (!st) return;
+    if (st.isSymbolicLink() || st.isFile()) {
+      fs.unlinkSync(p);
+    } else {
+      fs.rmSync(p, { recursive: true, force: true });
+    }
+  } catch {}
+}
+
+function installSkill() {
+  const srcSkill = path.join(__dirname, 'skills', 'agy-stats');
+  if (!fs.existsSync(srcSkill)) return;
+
+  fs.mkdirSync(AGENTS_SKILL_DIR, { recursive: true });
+  fs.cpSync(srcSkill, AGENTS_SKILL_DIR, { recursive: true });
+
+  fs.mkdirSync(GEMINI_SKILLS_DIR, { recursive: true });
+  removePath(GEMINI_SKILL_LINK);
+
+  try {
+    if (process.platform === 'win32') {
+      fs.symlinkSync(AGENTS_SKILL_DIR, GEMINI_SKILL_LINK, 'junction');
+    } else {
+      const relTarget = path.relative(GEMINI_SKILLS_DIR, AGENTS_SKILL_DIR);
+      fs.symlinkSync(relTarget, GEMINI_SKILL_LINK, 'dir');
+    }
+  } catch {
+    fs.cpSync(AGENTS_SKILL_DIR, GEMINI_SKILL_LINK, { recursive: true });
+  }
+  console.log(`Installed skill to ${AGENTS_SKILL_DIR} (linked at ${GEMINI_SKILL_LINK})`);
 }
 
 if (action === 'install') {
@@ -67,15 +108,19 @@ if (action === 'install') {
   writeSettings(settings);
   console.log(`Installed statusLine to ${TARGET_SCRIPT}`);
   console.log(`Updated ${SETTINGS_PATH}`);
+
+  if (!skipSkill) {
+    installSkill();
+  }
 } else if (action === 'uninstall') {
   const settings = readSettings();
   delete settings.statusLine;
   writeSettings(settings);
-  for (const f of [TARGET_SCRIPT, TARGET_PROTO, TARGET_CLI, LOCAL_BIN_SHIM]) {
-    if (fs.existsSync(f)) fs.unlinkSync(f);
+  for (const f of [TARGET_SCRIPT, TARGET_PROTO, TARGET_CLI, LOCAL_BIN_SHIM, GEMINI_SKILL_LINK, AGENTS_SKILL_DIR]) {
+    removePath(f);
   }
-  console.log('Uninstalled agy-stats and removed statusLine from settings.json');
+  console.log('Uninstalled agy-stats, skill, and removed statusLine from settings.json');
 } else {
-  console.error('Usage: node install.mjs [install|uninstall]');
+  console.error('Usage: node install.mjs [install|uninstall] [--no-skill]');
   process.exit(1);
 }
