@@ -77,33 +77,50 @@ export function collectStats(opts = {}) {
   const now = opts.now instanceof Date ? opts.now : new Date();
 
   let startMs;
+  let endMs = Infinity;
   let label;
+  let scopeTitle = '今日总览';
+  const todayStr = formatLocalDate(now.getTime());
+
   if (opts.session) {
     startMs = 0;
-    label = `Session ${opts.session}`;
+    label = `会话 ${opts.session}`;
+    scopeTitle = '会话总览';
+  } else if (opts.date && /^\d{4}-\d{2}-\d{2}$/.test(opts.date)) {
+    const [y, m, d] = opts.date.split('-').map(Number);
+    startMs = new Date(y, m - 1, d).getTime();
+    endMs = new Date(y, m - 1, d + 1).getTime() - 1;
+    label = opts.date === todayStr ? `今日 (${opts.date})` : opts.date;
+    scopeTitle = opts.date === todayStr ? '今日总览' : '当日总览';
   } else if (opts.week) {
     const day = now.getDay();
     const diffToMon = (day + 6) % 7;
     const mon = new Date(now.getFullYear(), now.getMonth(), now.getDate() - diffToMon);
     startMs = mon.getTime();
-    label = `This Week (${formatLocalDate(startMs)} ~ ${formatLocalDate(now.getTime())})`;
+    label = `本周 (${formatLocalDate(startMs)} ~ ${todayStr})`;
+    scopeTitle = '本周总览';
   } else if (typeof opts.days === 'number' && opts.days > 0) {
     const start = new Date(now.getFullYear(), now.getMonth(), now.getDate() - (opts.days - 1));
     startMs = start.getTime();
-    label = `Last ${opts.days} Days (${formatLocalDate(startMs)} ~ ${formatLocalDate(now.getTime())})`;
+    label = `最近 ${opts.days} 天 (${formatLocalDate(startMs)} ~ ${todayStr})`;
+    scopeTitle = `近${opts.days}天总览`;
   } else {
     startMs = new Date(now.getFullYear(), now.getMonth(), now.getDate()).getTime();
-    label = `Today (${formatLocalDate(now.getTime())})`;
+    endMs = new Date(now.getFullYear(), now.getMonth(), now.getDate() + 1).getTime() - 1;
+    label = `今日 (${todayStr})`;
+    scopeTitle = '今日总览';
   }
 
   if (!fs.existsSync(convDir)) {
     return {
       label,
+      scopeTitle,
       sessions: 0,
       totals: { gens: 0, prompt: 0, cacheRead: 0, inTok: 0, outTok: 0, cacheHitRatePct: 0 },
       byModel: [],
       byDay: [],
-      topSessions: []
+      topSessions: [],
+      allSessions: []
     };
   }
 
@@ -128,7 +145,7 @@ export function collectStats(opts = {}) {
   for (const f of files) {
     const dbPath = path.join(convDir, f);
     const mtimeMs = getDbMtimeMs(dbPath);
-    if (!opts.session && mtimeMs < startMs) continue;
+    if (!opts.session && (mtimeMs < startMs || mtimeMs > endMs)) continue;
 
     let db;
     try {
@@ -204,6 +221,7 @@ export function collectStats(opts = {}) {
   const sortedByRecent = [...sessionList].sort((a, b) => (b.mtimeMs || 0) - (a.mtimeMs || 0));
   return {
     label,
+    scopeTitle,
     sessions: sessionList.length,
     totals: {
       gens: totGens,
@@ -285,7 +303,7 @@ export function formatDashboard(stats, { color = false } = {}) {
   lines.push(`${bold}${cyan}AGY 统计看板${reset}  ${dim}${stats.label}${reset}`);
   lines.push(rule);
   lines.push(
-    `${bold}今日总览${reset}  会话数: ${bold}${stats.sessions}${reset}  调用: ${bold}${t.gens}${reset}  ` +
+    `${bold}${stats.scopeTitle || '今日总览'}${reset}  会话数: ${bold}${stats.sessions}${reset}  调用: ${bold}${t.gens}${reset}  ` +
       `总输入: ${bold}${fmtTok(t.prompt)}${reset}  缓存命中: ${bold}${fmtTok(t.cacheRead)}${reset}  ` +
       `未命中: ${fmtTok(t.inTok)}  输出: ${fmtTok(t.outTok)}  ` +
       `命中率: ${hitColor(t.cacheHitRatePct)}${bold}${t.cacheHitRatePct}%${reset}`
@@ -336,7 +354,7 @@ export function formatDashboard(stats, { color = false } = {}) {
 }
 
 export function parseCliArgs(argv) {
-  const opts = { week: false, days: 0, session: '', json: false, help: false, dashboard: false };
+  const opts = { week: false, days: 0, date: '', session: '', json: false, help: false, dashboard: false };
   for (let i = 0; i < argv.length; i++) {
     const a = argv[i];
     if (a === 'dashboard' || a === '--dashboard' || a === '--board' || a === '-b') opts.dashboard = true;
@@ -346,6 +364,9 @@ export function parseCliArgs(argv) {
     else if (a === '--today' || a === '-t') {
       opts.week = false;
       opts.days = 0;
+      opts.date = '';
+    } else if ((a === '--date' || a === '-D') && i + 1 < argv.length) {
+      opts.date = argv[++i];
     } else if ((a === '--days' || a === '-d') && i + 1 < argv.length) {
       opts.days = Math.max(1, parseInt(argv[++i], 10) || 1);
     } else if ((a === '--session' || a === '-s') && i + 1 < argv.length) {
@@ -353,6 +374,67 @@ export function parseCliArgs(argv) {
     }
   }
   return opts;
+}
+
+function shiftDateStr(dateStr, deltaDays) {
+  const [y, m, d] = dateStr.split('-').map(Number);
+  return formatLocalDate(new Date(y, m - 1, d + deltaDays).getTime());
+}
+
+function runInteractiveDashboard(initialOpts) {
+  const todayStr = formatLocalDate(Date.now());
+  let mode = initialOpts.week ? 'week' : 'day';
+  let currentDate = initialOpts.date && /^\d{4}-\d{2}-\d{2}$/.test(initialOpts.date) ? initialOpts.date : todayStr;
+
+  const render = () => {
+    const queryOpts = mode === 'week' ? { ...initialOpts, week: true, date: '' } : { ...initialOpts, week: false, date: currentDate };
+    const stats = collectStats(queryOpts);
+    const body = formatDashboard(stats, { color: true });
+    const navHint =
+      '\n\x1b[2m────────────────────────────────────────────────────────────────────────────────────────────────────\n' +
+      '操作: [← / h] 前一天   [→ / l] 后一天   [t] 今天   [w] 切换周/日   [r] 刷新   [q / Esc] 退出\x1b[0m';
+    process.stdout.write('\x1b[2J\x1b[H' + body + navHint + '\n');
+  };
+
+  process.stdin.setRawMode(true);
+  process.stdin.resume();
+  process.stdin.setEncoding('utf8');
+  process.stdout.write('\x1b[?25l');
+
+  const cleanup = () => {
+    process.stdout.write('\x1b[?25h');
+    try {
+      process.stdin.setRawMode(false);
+    } catch {}
+    process.stdin.pause();
+  };
+
+  render();
+
+  process.stdin.on('data', (key) => {
+    if (key === 'q' || key === '\u0003' || key === '\u001b') {
+      cleanup();
+      process.exit(0);
+    } else if (key === '\u001b[D' || key === 'h' || key === '[') {
+      mode = 'day';
+      currentDate = shiftDateStr(currentDate, -1);
+      render();
+    } else if (key === '\u001b[C' || key === 'l' || key === ']') {
+      mode = 'day';
+      const next = shiftDateStr(currentDate, 1);
+      if (next <= todayStr) currentDate = next;
+      render();
+    } else if (key === 't' || key === 'T') {
+      mode = 'day';
+      currentDate = todayStr;
+      render();
+    } else if (key === 'w' || key === 'W') {
+      mode = mode === 'week' ? 'day' : 'week';
+      render();
+    } else if (key === 'r' || key === 'R') {
+      render();
+    }
+  });
 }
 
 function isMain() {
@@ -372,8 +454,9 @@ if (isMain()) {
         'Usage: agy-stats [dashboard] [options]',
         '',
         'Options:',
-        '  -b, --board          Show dashboard (today overview + all sessions table)',
+        '  -b, --board          Show dashboard (interactive in TTY: ←/→ switch date, w week/day, q quit)',
         '  -t, --today          Show today stats (default)',
+        '  -D, --date <date>    Show stats for a specific date (YYYY-MM-DD)',
         '  -w, --week           Show this week stats (Mon ~ today)',
         '  -d, --days <N>       Show last N days stats',
         '  -s, --session <id>   Show a specific session (or "latest")',
@@ -383,12 +466,16 @@ if (isMain()) {
     );
     process.exit(0);
   }
-  const stats = collectStats(opts);
-  if (opts.json) {
-    console.log(JSON.stringify(stats, null, 2));
-  } else if (opts.dashboard) {
-    console.log(formatDashboard(stats, { color: Boolean(process.stdout.isTTY) }));
+  if (opts.dashboard && !opts.json && process.stdin.isTTY && process.stdout.isTTY) {
+    runInteractiveDashboard(opts);
   } else {
-    console.log(formatReport(stats));
+    const stats = collectStats(opts);
+    if (opts.json) {
+      console.log(JSON.stringify(stats, null, 2));
+    } else if (opts.dashboard) {
+      console.log(formatDashboard(stats, { color: Boolean(process.stdout.isTTY) }));
+    } else {
+      console.log(formatReport(stats));
+    }
   }
 }

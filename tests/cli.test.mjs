@@ -43,14 +43,16 @@ test('parseCliArgs parses flags cleanly', () => {
   assert.deepEqual(parseCliArgs(['--week', '--json']), {
     week: true,
     days: 0,
+    date: '',
     session: '',
     json: true,
     help: false,
     dashboard: false
   });
-  assert.deepEqual(parseCliArgs(['dashboard', '-s', 'latest', '-d', '3']), {
+  assert.deepEqual(parseCliArgs(['dashboard', '-s', 'latest', '-d', '3', '-D', '2026-11-21']), {
     week: false,
     days: 3,
+    date: '2026-11-21',
     session: 'latest',
     json: false,
     help: false,
@@ -102,6 +104,11 @@ test('collectStats aggregates by model and filters by day/week/session', () => {
   assert.equal(week.byModel.length, 2);
   assert.match(formatReport(week), /分模型:/);
   assert.match(formatReport(week), /按天:/);
+
+  const mondayOnly = collectStats({ cliDir: tmpDir, convDir, now, date: '2026-11-16' });
+  assert.equal(mondayOnly.sessions, 1);
+  assert.equal(mondayOnly.totals.prompt, 200000);
+  assert.equal(mondayOnly.scopeTitle, '当日总览');
 
   const latest = collectStats({ cliDir: tmpDir, convDir, now, session: 'latest' });
   assert.equal(latest.sessions, 1);
