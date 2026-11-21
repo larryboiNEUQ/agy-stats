@@ -61,12 +61,17 @@ export function parseGenMetadataRow(row) {
   const usage = chat.has(4) ? parseProto(chat.get(4)) : new Map();
   const chatStart = chat.has(9) ? parseProto(chat.get(9)) : new Map();
   const ctxMeta = chatStart.has(10) ? parseProto(chatStart.get(10)) : new Map();
+  const planner = top.has(3) ? parseProto(top.get(3)) : new Map();
 
   const inTok = usage.get(2) || 0;
   const outTok = usage.get(3) || 0;
   const cacheWrite = usage.get(4) || 0;
   const cacheRead = usage.get(5) || 0;
   const maxCtx = ctxMeta.get(4) || 0;
+  const modelName =
+    (chat.has(21) ? Buffer.from(chat.get(21)).toString('utf8').trim() : '') ||
+    (chat.has(19) ? Buffer.from(chat.get(19)).toString('utf8').trim() : '') ||
+    (planner.has(28) ? Buffer.from(planner.get(28)).toString('utf8').trim() : '');
 
   return {
     idx: row.idx,
@@ -75,6 +80,7 @@ export function parseGenMetadataRow(row) {
     cacheWrite,
     cacheRead,
     ctx: inTok + cacheWrite + cacheRead,
-    maxCtx
+    maxCtx,
+    modelName
   };
 }

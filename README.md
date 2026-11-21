@@ -1,20 +1,21 @@
-# agy-statusline
+# agy-stats
 
-Custom `statusLine` plugin for **Google Antigravity CLI (`agy`)**, displaying real-time context window usage, per-turn / per-session / daily prompt totals, and prompt cache hit rates directly in the TUI footer.
+Token usage & prompt cache hit rate **CLI (`agy-stats`)** and **`statusLine` plugin** for **Google Antigravity CLI (`agy`)**.
 
 ```text
-Ctx 21% (108k/512k) | 本轮命中 96.6% | 本会话 2.49M (命中 93.2%) | 今日 166.61M (命中 88.0%)
+# Terminal CLI
+$ agy-stats
+Today (2026-11-21)  (5 sessions, 1030 calls)
+Total: Prompt 175.45M | CacheRead 155.17M | Uncached 20.28M | Out 1.04M | Hit 88.44%
+
+By Model:
+  Gemini 4 Hydrogen (High)          450x  Prompt   93.28M  Hit  89.9%
+  Gemini 4 Hydrogen (Medium)        213x  Prompt   26.91M  Hit  87.7%
+  ...
+
+# agy TUI footer (statusLine)
+Ctx 26% (134k/512k) | 本轮命中 96.6% | 本会话 5.51M (命中 90.9%) | 今日 175.45M (命中 88.4%)
 ```
-
-## Why?
-
-`agy` CLI's `statusLine` `stdin` payload currently leaves `context_window.context_window_size` and `used_percentage` at `0`, and does not include session/daily aggregate cache hit rates.
-
-This plugin aligns directly with the local SQLite + Protobuf metrics logic from [nkjDSLcvanv/antigravity-codex-theme](https://github.com/nkjDSLcvanv/antigravity-codex-theme):
-- Reads `last.ctx` and the model's real `maxCtx` (`512k` / `256k` / `840k`, etc.) from `~/.gemini/antigravity-cli/conversations/<id>.db` (`gen_metadata` protobuf).
-- Computes **per-turn**, **per-session**, and **today's** prompt cache hit rates (`cacheRead / (inTok + cacheWrite + cacheRead)`).
-- Caches unchanged conversation `.db` files by `mtime + size` in the OS temp dir so warm refreshes complete in ~35ms (well within `agy`'s 5s timeout).
-- Stacks cleanly below the built-in status bar (`stack_with_default: true`).
 
 ## Requirements
 
@@ -24,20 +25,30 @@ This plugin aligns directly with the local SQLite + Protobuf metrics logic from 
 ## Install
 
 ```bash
-git clone https://github.com/larryboiNEUQ/agy-statusline.git
-cd agy-statusline
+git clone https://github.com/larryboiNEUQ/agy-stats.git
+cd agy-stats
 node install.mjs install
 ```
 
-Start a new `agy` session (or run `/statusline enable` inside an active TUI session).
+This installs:
+1. `agy-stats` CLI command to `~/.local/bin/agy-stats` (when `~/.local/bin` exists), or you can run `npm link`.
+2. `statusLine` hook into `~/.gemini/antigravity-cli/settings.json` (`stack_with_default: true`).
+
+## CLI Usage
+
+```bash
+agy-stats              # Today summary + by-model breakdown
+agy-stats --week       # This week (Mon ~ today) + by-day + by-model
+agy-stats --days 7     # Last 7 days
+agy-stats -s latest    # Most recent session
+agy-stats --json       # Raw JSON output
+```
 
 ## Uninstall
 
 ```bash
 node install.mjs uninstall
 ```
-
-Or temporarily disable it inside `agy` with `/statusline disable`.
 
 ## Test
 
