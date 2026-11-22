@@ -16,6 +16,7 @@ Prefer `agy-stats` if it is on `PATH`; otherwise run `node --no-warnings ~/.gemi
 - **This week (Mon ~ today)**: `agy-stats --week --json`
 - **Last N days**: `agy-stats --days 7 --json`
 - **Specific or latest session**: `agy-stats --session <conversation_id|latest> --json`
+- **Sync official Gemini pricing**: `agy-stats sync-pricing` (fetches `https://ai.google.dev/gemini-api/docs/pricing.md.txt`)
 
 ## Reporting
 

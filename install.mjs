@@ -10,6 +10,7 @@ const SETTINGS_PATH = path.join(CLI_DIR, 'settings.json');
 const TARGET_SCRIPT = path.join(CLI_DIR, 'statusline.mjs');
 const TARGET_PROTO = path.join(CLI_DIR, 'statusline-protobuf.mjs');
 const TARGET_CLI = path.join(CLI_DIR, 'agy-stats-cli.mjs');
+const TARGET_PRICING = path.join(CLI_DIR, 'agy-stats-pricing.mjs');
 const LOCAL_BIN_DIR = path.join(os.homedir(), '.local', 'bin');
 const LOCAL_BIN_SHIM = path.join(LOCAL_BIN_DIR, process.platform === 'win32' ? 'agy-stats.cmd' : 'agy-stats');
 
@@ -75,6 +76,7 @@ if (action === 'install') {
 
   fs.mkdirSync(CLI_DIR, { recursive: true });
   fs.copyFileSync(path.join(__dirname, 'src', 'protobuf.mjs'), TARGET_PROTO);
+  fs.copyFileSync(path.join(__dirname, 'src', 'pricing.mjs'), TARGET_PRICING);
 
   const installedStatusline = fs
     .readFileSync(path.join(__dirname, 'src', 'statusline.mjs'), 'utf8')
@@ -85,6 +87,7 @@ if (action === 'install') {
   const installedCli = fs
     .readFileSync(path.join(__dirname, 'src', 'cli.mjs'), 'utf8')
     .replace("from './protobuf.mjs'", "from './statusline-protobuf.mjs'")
+    .replace("from './pricing.mjs'", "from './agy-stats-pricing.mjs'")
     .replace("from './statusline.mjs'", "from './statusline.mjs'");
   fs.writeFileSync(TARGET_CLI, installedCli);
   fs.chmodSync(TARGET_CLI, 0o755);
@@ -116,7 +119,7 @@ if (action === 'install') {
   const settings = readSettings();
   delete settings.statusLine;
   writeSettings(settings);
-  for (const f of [TARGET_SCRIPT, TARGET_PROTO, TARGET_CLI, LOCAL_BIN_SHIM, GEMINI_SKILL_LINK, AGENTS_SKILL_DIR]) {
+  for (const f of [TARGET_SCRIPT, TARGET_PROTO, TARGET_CLI, TARGET_PRICING, LOCAL_BIN_SHIM, GEMINI_SKILL_LINK, AGENTS_SKILL_DIR]) {
     removePath(f);
   }
   console.log('Uninstalled agy-stats, skill, and removed statusLine from settings.json');

@@ -47,7 +47,8 @@ test('parseCliArgs parses flags cleanly', () => {
     session: '',
     json: true,
     help: false,
-    dashboard: false
+    dashboard: false,
+    syncPricing: false
   });
   assert.deepEqual(parseCliArgs(['dashboard', '-s', 'latest', '-d', '3', '-D', '2026-11-21']), {
     week: false,
@@ -56,7 +57,8 @@ test('parseCliArgs parses flags cleanly', () => {
     session: 'latest',
     json: false,
     help: false,
-    dashboard: true
+    dashboard: true,
+    syncPricing: false
   });
 });
 

@@ -6,6 +6,7 @@ import { pathToFileURL } from 'node:url';
 import { DatabaseSync } from 'node:sqlite';
 import { parseGenMetadataRow } from './protobuf.mjs';
 import { fmtTok } from './statusline.mjs';
+import { estimateTokenCost, fmtUsd, loadPricingTable, syncPricingFromDocs } from './pricing.mjs';
 
 function formatLocalDate(ms) {
   const d = new Date(ms);
@@ -39,9 +40,9 @@ function readTitleMap(cliDir) {
   return map;
 }
 
-function addBucket(map, key, row) {
+function addBucket(map, key, row, est) {
   if (!map.has(key)) {
-    map.set(key, { gens: 0, inTok: 0, cacheWrite: 0, cacheRead: 0, outTok: 0 });
+    map.set(key, { gens: 0, inTok: 0, cacheWrite: 0, cacheRead: 0, outTok: 0, costUsd: 0, savedUsd: 0, pricedGens: 0 });
   }
   const b = map.get(key);
   b.gens++;
@@ -49,6 +50,11 @@ function addBucket(map, key, row) {
   b.cacheWrite += row.cacheWrite;
   b.cacheRead += row.cacheRead;
   b.outTok += row.outTok;
+  if (est && est.priced) {
+    b.costUsd += est.costUsd;
+    b.savedUsd += est.savedUsd;
+    b.pricedGens++;
+  }
 }
 
 function finalizeBuckets(map) {
@@ -62,6 +68,9 @@ function finalizeBuckets(map) {
         cacheRead: v.cacheRead,
         inTok: v.inTok,
         outTok: v.outTok,
+        costUsd: Number(v.costUsd.toFixed(4)),
+        savedUsd: Number(v.savedUsd.toFixed(4)),
+        priced: v.pricedGens > 0,
         cacheHitRatePct: prompt > 0 ? Number(((v.cacheRead / prompt) * 100).toFixed(2)) : 0
       };
     })
@@ -132,6 +141,7 @@ export function collectStats(opts = {}) {
     files = files.filter((f) => f === `${opts.session}.db` || f.startsWith(opts.session));
   }
 
+  const pricingTable = loadPricingTable(cliDir);
   const titleMap = readTitleMap(cliDir);
   const byModel = new Map();
   const byDay = new Map();
@@ -141,6 +151,9 @@ export function collectStats(opts = {}) {
   let totCW = 0;
   let totCR = 0;
   let totOut = 0;
+  let totCostUsd = 0;
+  let totSavedUsd = 0;
+  let unpricedGens = 0;
 
   for (const f of files) {
     const dbPath = path.join(convDir, f);
@@ -156,6 +169,9 @@ export function collectStats(opts = {}) {
       let sCW = 0;
       let sCR = 0;
       let sOut = 0;
+      let sCostUsd = 0;
+      let sSavedUsd = 0;
+      let sPriced = false;
       let lastCtx = 0;
       let lastMaxCtx = 0;
       const sessModels = new Map();
@@ -164,17 +180,25 @@ export function collectStats(opts = {}) {
       for (let i = 0; i < rows.length; i++) {
         const p = parseGenMetadataRow(rows[i]);
         if (!(p.ctx > 0 || p.outTok > 0 || p.inTok > 0 || p.cacheRead > 0)) continue;
+        const est = estimateTokenCost(p, pricingTable, mtimeMs);
         sGens++;
         sIn += p.inTok;
         sCW += p.cacheWrite;
         sCR += p.cacheRead;
         sOut += p.outTok;
+        if (est.priced) {
+          sCostUsd += est.costUsd;
+          sSavedUsd += est.savedUsd;
+          sPriced = true;
+        } else {
+          unpricedGens++;
+        }
         if (p.ctx > 0) lastCtx = p.ctx;
         if (p.maxCtx > 0) lastMaxCtx = p.maxCtx;
         const mName = p.modelName || '(unknown)';
         sessModels.set(mName, (sessModels.get(mName) || 0) + p.inTok + p.cacheWrite + p.cacheRead);
-        addBucket(byModel, mName, p);
-        addBucket(byDay, dayKey, p);
+        addBucket(byModel, mName, p, est);
+        addBucket(byDay, dayKey, p, est);
       }
 
       if (sGens > 0) {
@@ -190,6 +214,8 @@ export function collectStats(opts = {}) {
         totCW += sCW;
         totCR += sCR;
         totOut += sOut;
+        totCostUsd += sCostUsd;
+        totSavedUsd += sSavedUsd;
         sessionList.push({
           id: cid,
           title: titleMap.get(cid) || '(无标题)',
@@ -202,6 +228,9 @@ export function collectStats(opts = {}) {
           cacheRead: sCR,
           inTok: sIn,
           outTok: sOut,
+          costUsd: Number(sCostUsd.toFixed(4)),
+          savedUsd: Number(sSavedUsd.toFixed(4)),
+          priced: sPriced,
           lastCtx,
           ctxLimit,
           ctxPct: ctxLimit > 0 ? Math.round((lastCtx / ctxLimit) * 100) : 0,
@@ -229,8 +258,12 @@ export function collectStats(opts = {}) {
       cacheRead: totCR,
       inTok: totIn,
       outTok: totOut,
+      costUsd: Number(totCostUsd.toFixed(4)),
+      savedUsd: Number(totSavedUsd.toFixed(4)),
+      unpricedGens,
       cacheHitRatePct: totPrompt > 0 ? Number(((totCR / totPrompt) * 100).toFixed(2)) : 0
     },
+    pricingSyncedAt: pricingTable.syncedAt || 'built-in',
     byModel: finalizeBuckets(byModel).sort((a, b) => b.cacheHitRatePct - a.cacheHitRatePct || b.prompt - a.prompt),
     byDay: finalizeBuckets(byDay).sort((a, b) => a.key.localeCompare(b.key)),
     topSessions: sortedByPrompt.slice(0, 5),
@@ -242,17 +275,20 @@ export function formatReport(stats) {
   const lines = [];
   const t = stats.totals;
   lines.push(`${stats.label}（${stats.sessions} 个会话，${t.gens} 次调用）`);
+  const unpricedNote = t.unpricedGens > 0 ? `（不含 ${t.unpricedGens} 次非Gemini调用）` : '';
   lines.push(
     `总计: 输入 ${fmtTok(t.prompt)} | 缓存命中 ${fmtTok(t.cacheRead)} | 未命中 ${fmtTok(t.inTok)} | 输出 ${fmtTok(t.outTok)} | 命中率 ${t.cacheHitRatePct}%`
   );
+  lines.push(`参考API费用: ~${fmtUsd(t.costUsd)}（缓存省 ~${fmtUsd(t.savedUsd)}）${unpricedNote}`);
 
   if (stats.byModel.length > 0) {
     const modelWidth = Math.max(...stats.byModel.map((m) => m.key.length), 12);
     lines.push('');
     lines.push('分模型:');
     for (const m of stats.byModel) {
+      const costStr = m.priced ? fmtUsd(m.costUsd) : '--';
       lines.push(
-        `  ${m.key.padEnd(modelWidth)}  ${String(m.gens).padStart(4)}次  输入 ${fmtTok(m.prompt).padStart(8)}  命中 ${String(m.cacheHitRatePct.toFixed(1) + '%').padStart(6)}`
+        `  ${m.key.padEnd(modelWidth)}  ${String(m.gens).padStart(4)}次  输入 ${fmtTok(m.prompt).padStart(8)}  命中 ${String(m.cacheHitRatePct.toFixed(1) + '%').padStart(6)}  费用 ${costStr.padStart(7)}`
       );
     }
   }
@@ -344,19 +380,24 @@ export function formatDashboard(stats, { color = false, columns = process.stdout
   const lines = [];
   lines.push(`${bold}${cyan}AGY 统计看板${reset}  ${dim}${stats.label}${reset}`);
   lines.push(rule);
+  const unpricedNote = t.unpricedGens > 0 ? ` ${dim}(不含 ${t.unpricedGens} 次非Gemini调用)${reset}` : '';
   lines.push(
     `${bold}${stats.scopeTitle || '今日总览'}${reset}  会话数: ${bold}${stats.sessions}${reset}  调用: ${bold}${t.gens}${reset}  ` +
       `总输入: ${bold}${fmtTok(t.prompt)}${reset}  缓存命中: ${bold}${fmtTok(t.cacheRead)}${reset}  ` +
       `未命中: ${fmtTok(t.inTok)}  输出: ${fmtTok(t.outTok)}  ` +
       `命中率: ${hitColor(t.cacheHitRatePct)}${bold}${t.cacheHitRatePct}%${reset}`
   );
+  lines.push(
+    `${bold}API估算${reset}   参考费用: ${yellow}${bold}~${fmtUsd(t.costUsd)}${reset}  缓存省下: ${green}~${fmtUsd(t.savedUsd)}${reset}  ${dim}价格源: ai.google.dev (${stats.pricingSyncedAt || 'built-in'})${reset}${unpricedNote}`
+  );
 
   if (stats.byModel.length > 0) {
     const modelWidth = Math.max(...stats.byModel.map((m) => m.key.length), 12);
     lines.push(`${bold}分模型汇总 (${stats.byModel.length})${reset}`);
     for (const m of stats.byModel) {
+      const costStr = m.priced ? fmtUsd(m.costUsd) : '--';
       lines.push(
-        `  ${m.key.padEnd(modelWidth)}  ${String(m.gens).padStart(4)}次  输入 ${fmtTok(m.prompt).padStart(8)}  缓存 ${fmtTok(m.cacheRead).padStart(8)}  命中 ${hitColor(m.cacheHitRatePct)}${String(m.cacheHitRatePct.toFixed(1) + '%').padStart(6)}${reset}`
+        `  ${m.key.padEnd(modelWidth)}  ${String(m.gens).padStart(4)}次  输入 ${fmtTok(m.prompt).padStart(8)}  缓存 ${fmtTok(m.cacheRead).padStart(8)}  命中 ${hitColor(m.cacheHitRatePct)}${String(m.cacheHitRatePct.toFixed(1) + '%').padStart(6)}${reset}  费用 ${costStr.padStart(7)}`
       );
     }
   }
@@ -371,11 +412,11 @@ export function formatDashboard(stats, { color = false, columns = process.stdout
 
   const multiDay = new Set(sessions.map((s) => s.date)).size > 1;
   const timeW = multiDay ? 11 : 5;
-  const fixedW = 2 + timeW + 2 + 8 + 2 + 5 + 2 + 8 + 2 + 8 + 2 + 7 + 2 + 6 + 2 + 6 + 2;
-  const titleMaxW = Math.max(16, width - fixedW);
+  const fixedW = 2 + timeW + 2 + 8 + 2 + 5 + 2 + 8 + 2 + 8 + 2 + 7 + 2 + 6 + 2 + 6 + 2 + 7 + 2;
+  const titleMaxW = Math.max(14, width - fixedW);
 
   lines.push(
-    `${dim}  ${padEndW('时间', timeW)}  ${padEndW('ID', 8)}  ${padStartW('调用', 5)}  ${padStartW('总输入', 8)}  ${padStartW('缓存', 8)}  ${padStartW('输出', 7)}  ${padStartW('命中率', 6)}  ${padStartW('上下文', 6)}  标题${reset}`
+    `${dim}  ${padEndW('时间', timeW)}  ${padEndW('ID', 8)}  ${padStartW('调用', 5)}  ${padStartW('总输入', 8)}  ${padStartW('缓存', 8)}  ${padStartW('输出', 7)}  ${padStartW('命中率', 6)}  ${padStartW('上下文', 6)}  ${padStartW('费用', 7)}  标题${reset}`
   );
 
   for (const s of sessions) {
@@ -387,11 +428,12 @@ export function formatDashboard(stats, { color = false, columns = process.stdout
     const out = fmtTok(s.outTok).padStart(7);
     const hitStr = `${s.cacheHitRatePct.toFixed(1)}%`.padStart(6);
     const ctxStr = `${s.ctxPct ?? 0}%`.padStart(6);
+    const costStr = (s.priced ? fmtUsd(s.costUsd) : '--').padStart(7);
     const title = truncateW(s.title || '(无标题)', titleMaxW);
     const modelsText = (s.models && s.models.length > 0 ? s.models.join(', ') : s.model || '(unknown)');
 
     lines.push(
-      `  ${tm}  ${dim}${shortId}${reset}  ${calls}  ${prompt}  ${cache}  ${out}  ${hitColor(s.cacheHitRatePct)}${hitStr}${reset}  ${ctxStr}  ${bold}${title}${reset}`
+      `  ${tm}  ${dim}${shortId}${reset}  ${calls}  ${prompt}  ${cache}  ${out}  ${hitColor(s.cacheHitRatePct)}${hitStr}${reset}  ${ctxStr}  ${yellow}${costStr}${reset}  ${bold}${title}${reset}`
     );
     lines.push(`  ${' '.repeat(timeW)}  ${dim}└ 模型: ${modelsText}${reset}`);
   }
@@ -400,10 +442,11 @@ export function formatDashboard(stats, { color = false, columns = process.stdout
 }
 
 export function parseCliArgs(argv) {
-  const opts = { week: false, days: 0, date: '', session: '', json: false, help: false, dashboard: false };
+  const opts = { week: false, days: 0, date: '', session: '', json: false, help: false, dashboard: false, syncPricing: false };
   for (let i = 0; i < argv.length; i++) {
     const a = argv[i];
     if (a === 'dashboard' || a === '--dashboard' || a === '--board' || a === '-b') opts.dashboard = true;
+    else if (a === 'sync-pricing' || a === '--sync-pricing') opts.syncPricing = true;
     else if (a === '--week' || a === '-w') opts.week = true;
     else if (a === '--json') opts.json = true;
     else if (a === '--help' || a === '-h') opts.help = true;
@@ -534,7 +577,7 @@ if (isMain()) {
   if (opts.help) {
     console.log(
       [
-        'Usage: agy-stats [dashboard] [options]',
+        'Usage: agy-stats [dashboard|sync-pricing] [options]',
         '',
         'Options:',
         '  -b, --board          Show dashboard (interactive in TTY: ←/→ switch date, w week/day, q quit)',
@@ -543,11 +586,22 @@ if (isMain()) {
         '  -w, --week           Show this week stats (Mon ~ today)',
         '  -d, --days <N>       Show last N days stats',
         '  -s, --session <id>   Show a specific session (or "latest")',
+        '      --sync-pricing   Sync Gemini API pricing from ai.google.dev docs',
         '      --json           Output raw JSON',
         '  -h, --help           Show help'
       ].join('\n')
     );
     process.exit(0);
+  }
+  if (opts.syncPricing) {
+    try {
+      const res = await syncPricingFromDocs();
+      console.log(`Synced ${res.count} Gemini model prices to ${res.outPath} (${res.payload.syncedAt})`);
+      process.exit(0);
+    } catch (err) {
+      console.error(`Failed to sync pricing: ${err.message}`);
+      process.exit(1);
+    }
   }
   if (opts.dashboard && !opts.json && process.stdin.isTTY && process.stdout.isTTY) {
     runInteractiveDashboard(opts);
